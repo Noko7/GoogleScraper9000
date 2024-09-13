@@ -1,196 +1,313 @@
-import csv
 import re
+from playwright.sync_api import sync_playwright
+from dataclasses import dataclass, asdict, field
+import pandas as pd
 import os
-import sys
+import csv
+import random
+import itertools
 import time
-import pyfiglet
-from termcolor import colored
-from selenium import webdriver
-from selenium.webdriver.firefox.options import Options
-from selenium.webdriver.firefox.service import Service as FirefoxService
-from webdriver_manager.firefox import GeckoDriverManager
-from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
-from bs4 import BeautifulSoup
 
-# List of business types
+# List of business categories
 business_types = [
     "Real Estate companies", "Charity/Non-Profits", "Portfolio sites for Instagram artists",
     "Local Restaurant chains", "Personal Injury Law Firms", "Independent insurance sites",
     "Landscaping/Fertilizer", "Painting", "Power Washing", "Car Wash", "Axe Throwing", "Gun Ranges/Stores",
     "Currency Exchanges/Check Cashing", "Construction Materials Companies", "Gyms", "Salons with multiple locations",
-    "Eyebrow Microblading", "Estheticians", "Orthodontists", "Used Car dealerships"
+    "Eyebrow Microblading", "Estheticians", "Orthodontists", "Used Car dealerships", "Clothing Brand"
 ]
 
-progress_file = "scraped_results.csv"
-fieldnames = ['Business Type', 'City', 'Business Name', 'Phone Number', 'Number of Reviews', 'Website URL']
+@dataclass
+class Business:
+    """Holds business data"""
+    name: str = None
+    address: str = None
+    website: str = None
+    phone_number: str = None
+    reviews_count: int = None
+    reviews_average: float = None
+    latitude: float = None
+    longitude: float = None
 
-# Function to check how many listings we already have for a given business type and city
-def count_existing_listings():
-    progress_dict = {business: {} for business in business_types}
-    total_scraped = 0
-    
-    if os.path.exists(progress_file):
-        with open(progress_file, mode='r', newline='', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
-                business_type = row['Business Type']
-                city = row['City']
-                if business_type in progress_dict:
-                    if city in progress_dict[business_type]:
-                        progress_dict[business_type][city] += 1
-                    else:
-                        progress_dict[business_type][city] = 1
-                total_scraped += 1
-    return progress_dict, total_scraped
+@dataclass
+class BusinessList:
+    """Holds list of Business objects and saves to both Excel and CSV."""
+    business_list: list[Business] = field(default_factory=list)
+    save_at: str = 'output'
+    seen_businesses: set = field(default_factory=set)  # Set to track unique businesses
 
-# Function to find the last processed business type and city
-def get_last_processed_entry():
-    last_business_type = None
-    last_city = None
-    if os.path.exists(progress_file):
-        with open(progress_file, mode='r', newline='', encoding='utf-8') as f:
-            reader = list(csv.DictReader(f))
-            if reader:  # If the CSV is not empty
-                last_entry = reader[-1]
-                last_business_type = last_entry['Business Type']
-                last_city = last_entry['City']
-    return last_business_type, last_city
+    def dataframe(self):
+        """Transform business_list to a pandas dataframe."""
+        return pd.json_normalize(
+            (asdict(business) for business in self.business_list), sep="_"
+        )
 
-# Create a CSV file if it doesn't exist
-if not os.path.exists(progress_file):
-    with open(progress_file, mode='w', newline='', encoding='utf-8') as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        writer.writeheader()
+    def save_to_excel(self, filename, append=True):
+        """Saves pandas dataframe to a single centralized Excel (xlsx) file."""
+        if not os.path.exists(self.save_at):
+            os.makedirs(self.save_at)
+        file_path = f"{self.save_at}/{filename}.xlsx"
+        if append and os.path.exists(file_path):
+            existing_data = pd.read_excel(file_path)
+            combined_data = pd.concat([existing_data, self.dataframe()], ignore_index=True)
+            combined_data.to_excel(file_path, index=False)
+        else:
+            self.dataframe().to_excel(file_path, index=False)
 
-# Display menu to the user
-print("Select one or more business types by entering their numbers (e.g., 1 for a single type or 1-5 for a range):")
-for i, business in enumerate(business_types, start=1):
-    print(f"{i}. {business}")
+    def save_to_csv(self, filename, append=True):
+        """Saves pandas dataframe to a single centralized CSV file with headers."""
+        if not os.path.exists(self.save_at):
+            os.makedirs(self.save_at)
+        file_path = f"{self.save_at}/{filename}.csv"
+        mode = 'a' if append else 'w'
+        self.dataframe().to_csv(file_path, mode=mode, index=False, header=not append)
 
-# Get user input for business types
-business_choices = input("Enter your choice or range: ").split('-')
-start_type = int(business_choices[0]) - 1
-end_type = int(business_choices[1]) if len(business_choices) > 1 else start_type + 1
-selected_business_types = business_types[start_type:end_type]
+    def add_business(self, business):
+        """Add a business to the list if it's not a duplicate."""
+        unique_key = (business.name, business.address, business.phone_number)
+        if unique_key not in self.seen_businesses:
+            self.seen_businesses.add(unique_key)  # Track this business as captured
+            self.business_list.append(business)  # Add the business to the list
 
-# Ask the user for the number of listings to capture
-num_listings_to_capture = int(input("How many listings do you want to capture for each business type? "))
-
-# Set up Firefox options for headless mode
-options = Options()
-options.headless = True  # Run Firefox in headless mode
-
-# Set up Firefox WebDriver using webdriver-manager to auto-download the correct GeckoDriver
-service = FirefoxService(GeckoDriverManager().install())
-driver = webdriver.Firefox(service=service, options=options)
-
-# Open Google Maps
-driver.get("https://www.google.com/maps")
-time.sleep(3)
-
-# Load cities from the CSV file
-cities = []
-with open('uscities.csv', mode='r', newline='', encoding='utf-8') as file:
-    csv_reader = csv.DictReader(file)
-    for row in csv_reader:
-        cities.append(row['city_ascii'])
-
-# Function to scroll the listings container
-def scroll_down(driver):
+def extract_coordinates_from_url(url: str) -> tuple[float, float]:
+    """Helper function to extract coordinates from URL."""
     try:
-        listings_container = driver.find_element(By.XPATH, '//div[@role="feed"]')
-        driver.execute_script("arguments[0].scrollTop = arguments[0].scrollHeight", listings_container)
-    except Exception as e:
-        print(f"Error during scroll: {e}")
+        coordinates = url.split('/@')[-1].split('/')[0]
+        return float(coordinates.split(',')[0]), float(coordinates.split(',')[1])
+    except (IndexError, ValueError) as e:
+        print(f"Error extracting coordinates: {e}")
+        return None, None
 
-# Function to check if the page has reached the end of the list by text content
-def check_end_of_list(driver):
-    try:
-        end_of_list_element = driver.find_element(By.XPATH, "//*[contains(text(), \"You've reached the end of the list\")]")
-        if end_of_list_element:
-            return True
-    except:
-        return False
-    return False
+def sanitize_filename(filename: str) -> str:
+    """Sanitize the filename by removing invalid characters."""
+    return re.sub(r'[\/:*?"<>|\n]', '_', filename)
 
-# Function to save progress to CSV
-def save_progress(captured_listings):
-    with open(progress_file, mode='a', newline='', encoding='utf-8') as f:
-        writer = csv.DictWriter(f, fieldnames=fieldnames)
-        for listing in captured_listings:
-            writer.writerow(listing)
+def clean_business_name(name: str) -> str:
+    """Remove '· Visited link' from the business name."""
+    return name.replace(" · Visited link", "").strip()
 
-# Rainbow progress bar function
-def update_progress_bar(current, total, business_type, business_scraped, listings_left):
-    bar_length = 30  # Length of the progress bar
-    progress = current / total
-    block = int(round(bar_length * progress))
-    
-    colors = ['red', 'yellow', 'green', 'cyan', 'blue', 'magenta']
-    
-    # Create rainbow effect
-    progress_bar = ''.join([colored('#', colors[i % len(colors)]) for i in range(block)])
-    empty_bar = ' ' * (bar_length - block)
-    
-    progress_text = f"\rProgress: [{progress_bar}{empty_bar}] {round(progress * 100, 2)}% complete. Scraping {business_scraped}/{listings_left} {business_type} listings"
-    sys.stdout.write(progress_text)
-    sys.stdout.flush()
+# Function to read the CSV file and get a list of cities and states
+def get_cities_and_states_from_csv(filename):
+    cities_states = []
+    with open(filename, newline='', encoding='utf-8') as csvfile:
+        reader = csv.DictReader(csvfile)
+        for row in reader:
+            cities_states.append((row['city'], row['state_id']))  # Append tuple (city, state)
+    return cities_states
 
-# ASCII art progress update function
-def display_ascii_count(business_scraped, listings_left):
-    ascii_banner = pyfiglet.figlet_format(f"{business_scraped}/{listings_left}")
-    print(colored(ascii_banner, 'cyan'))
+# Function to randomly select a city and its state
+def select_random_city_and_state(cities_states):
+    return random.choice(cities_states)
 
-# Track total listings scraped
-progress_dict, total_scraped = count_existing_listings()
+# Create a red-colored spinning effect function
+def spinning_cursor():
+    spinner = itertools.cycle(['|', '/', '-', '\\'])
+    while True:
+        yield f"\033[91m{next(spinner)}\033[0m"  # Red-colored spinner using ANSI escape codes
 
-# Total listings to capture for all selected business types
-total_listings_to_capture = num_listings_to_capture * len(selected_business_types) * len(cities)
-listings_captured = total_scraped
+def main():
+    # Display menu for business categories
+    print("Select one or more business types by entering their numbers (e.g., 1 for a single type or 1-5 for a range):")
+    for i, business in enumerate(business_types, start=1):
+        print(f"{i}. {business}")
 
-# Get last processed business type and city
-last_business_type, last_city = get_last_processed_entry()
+    # Get user input for business category
+    business_choice = int(input("Enter the number of the business category you want to scrape: ")) - 1
+    selected_business_type = business_types[business_choice]
 
-# Show initial progress bar on script load
-update_progress_bar(listings_captured, total_listings_to_capture, "", listings_captured, total_listings_to_capture)
+    # Ask user for the number of listings to scrape
+    num_listings_to_capture = int(input(f"How many {selected_business_type} listings do you want to scrape? "))
 
-# If progress exists, start from the last processed point
-skip_business_type = True if last_business_type else False
-skip_city = True if last_city else False
+    # Ask user if they want to run in headless mode
+    headless_choice = input("Do you want to run the script in headless mode? (y/n): ").strip().lower()
+    headless = headless_choice == 'y'
 
-for business_type in selected_business_types:
-    if skip_business_type and business_type != last_business_type:
-        continue
-    skip_business_type = False  # Stop skipping after reaching the last processed business type
+    # Get cities and states from uscities.csv and select a random city and state
+    cities_states = get_cities_and_states_from_csv('uscities.csv')
 
-    for city in cities:
-        if skip_city and city != last_city:
-            continue
-        skip_city = False  # Stop skipping after reaching the last processed city
+    # Centralized filename for all cities
+    centralized_filename = "Scraped_results"
 
-        try:
-            # Get the number of already scraped listings for the business type and city
-            listings_scraped_in_city = progress_dict[business_type].get(city, 0)
-            if listings_scraped_in_city >= num_listings_to_capture:
-                continue
+    # Spinner initialization
+    spinner = spinning_cursor()
 
-            listings_left = num_listings_to_capture - listings_scraped_in_city
+    # Begin scraping process
+    with sync_playwright() as p:
+        # Start browser in headless mode based on user input
+        browser = p.chromium.launch(headless=headless)
+        page = browser.new_page()
 
-            while listings_scraped_in_city < num_listings_to_capture:
-                scroll_down(driver)
-                # Logic for scraping listings and updating progress
-                # ...
+        listings_scraped = 0
+        first_save = True  # Track first save to write headers in CSV
+        business_list = BusinessList()  # Initialize BusinessList
 
-                listings_scraped_in_city += 1
-                listings_captured += 1
+        while listings_scraped < num_listings_to_capture and len(cities_states) > 0:
+            # Randomly select a city and state
+            selected_city, selected_state = select_random_city_and_state(cities_states)
 
-                # Update the progress bar and show ASCII
-                update_progress_bar(listings_captured, total_listings_to_capture, business_type, listings_captured, total_listings_to_capture)
-                display_ascii_count(listings_captured, total_listings_to_capture)
+            # Remove the selected city to avoid revisiting it
+            cities_states.remove((selected_city, selected_state))
 
-        except Exception as e:
-            print(f"Error processing {business_type} in {city}: {e}")
+            print(f"Searching for {selected_business_type} in {selected_city}, {selected_state}.")
 
-# Close the driver
-driver.quit()
+            search_for = f"{selected_business_type} in {selected_city}, {selected_state}"  # Include city and state in the search
+
+            # Go to Google Maps and search for the business type in the city
+            try:
+                page.goto("https://www.google.com/maps", timeout=10000)
+                page.wait_for_selector('//input[@id="searchboxinput"]', timeout=10000)
+                page.locator('//input[@id="searchboxinput"]').fill(search_for)
+                page.keyboard.press("Enter")
+                page.wait_for_selector('//a[contains(@href, "https://www.google.com/maps/place")]', timeout=15000)
+            except Exception as e:
+                print(f"Error occurred while searching for {selected_business_type} in {selected_city}: {e}")
+                continue  # Skip to the next city
+
+            # Check if any results are found by checking the number of listings
+            try:
+                current_count = page.locator('//a[contains(@href, "https://www.google.com/maps/place")]').count()
+            except Exception as e:
+                print(f"Error detecting results for {selected_city}, skipping: {e}")
+                continue  # Skip to the next city
+
+            if current_count == 0:
+                print(f"No results found for {selected_business_type} in {selected_city}, {selected_state}. Moving to next city.")
+                continue  # Move to the next city if no results
+
+            print(f"Found {current_count} listings for {selected_business_type} in {selected_city}, {selected_state}.")
+
+            # Scroll through listings and wait for the elements to load
+            MAX_SCROLL_ATTEMPTS = 10  # Limit scrolling attempts
+            scroll_attempts = 0
+            previously_counted = current_count
+
+            while listings_scraped < num_listings_to_capture:
+                # Scrape visible listings first
+                try:
+                    listings = page.locator('//a[contains(@href, "https://www.google.com/maps/place")]').all()
+                except Exception as e:
+                    print(f"Error while fetching listings: {e}")
+                    break
+
+                if not listings:
+                    print(f"No more listings found. Moving to the next city.")
+                    break
+
+                for listing in listings:
+                    try:
+                        if listings_scraped >= num_listings_to_capture:
+                            break  # Stop scraping if we have enough listings
+
+                        # Spinner effect (faster update and red color)
+                        spinner_char = next(spinner)
+                        print(f"\rScraping listing: {listings_scraped + 1} of {num_listings_to_capture} {spinner_char}", end='')
+
+                        # Try to click the listing and retry a limited number of times if it fails
+                        MAX_CLICK_RETRIES = 5
+                        for retry_attempt in range(MAX_CLICK_RETRIES):
+                            try:
+                                listing.click()
+                                page.wait_for_timeout(2000)  # Ensure page fully loads before extracting data
+                                break  # Exit the retry loop once successful
+                            except Exception as e:
+                                print(f"Retrying click, attempt {retry_attempt + 1}: {e}")
+                                page.wait_for_timeout(1000)
+
+                        name_attribute = 'aria-label'
+                        address_xpath = '//button[@data-item-id="address"]//div[contains(@class, "fontBodyMedium")]'
+                        website_xpath = '//a[@data-item-id="authority"]//div[contains(@class, "fontBodyMedium")]'
+                        phone_number_xpath = '//button[contains(@data-item-id, "phone:tel:")]//div[contains(@class, "fontBodyMedium")]'
+                        review_count_xpath = '//button[@jsaction="pane.reviewChart.moreReviews"]//span'
+                        reviews_average_xpath = '//div[@jsaction="pane.reviewChart.moreReviews"]//div[@role="img"]'
+
+                        business = Business()
+
+                        # Name
+                        if listing.get_attribute(name_attribute):
+                            business.name = clean_business_name(listing.get_attribute(name_attribute))  # Clean the name
+                        else:
+                            business.name = "Unknown"
+
+                        # Address
+                        if page.locator(address_xpath).count() > 0:
+                            business.address = page.locator(address_xpath).first.inner_text()
+                        else:
+                            business.address = "Unknown"
+
+                        # Website
+                        if page.locator(website_xpath).count() > 0:
+                            business.website = page.locator(website_xpath).first.inner_text()
+                        else:
+                            business.website = "No Website"
+
+                        # Phone Number
+                        if page.locator(phone_number_xpath).count() > 0:
+                            business.phone_number = page.locator(phone_number_xpath).first.inner_text()
+                        else:
+                            business.phone_number = "No Phone"
+
+                        # Review Count
+                        if page.locator(review_count_xpath).count() > 0:
+                            business.reviews_count = int(
+                                page.locator(review_count_xpath).inner_text().split()[0].replace(',', '').strip()
+                            )
+                        else:
+                            business.reviews_count = 0
+
+                        # Review Average
+                        if page.locator(reviews_average_xpath).count() > 0:
+                            business.reviews_average = float(
+                                page.locator(reviews_average_xpath).get_attribute('aria-label').split()[0].replace(',', '.').strip()
+                            )
+                        else:
+                            business.reviews_average = 0.0
+
+                        # Latitude and Longitude
+                        latitude, longitude = extract_coordinates_from_url(page.url)
+                        if latitude is not None and longitude is not None:
+                            business.latitude = latitude
+                            business.longitude = longitude
+
+                        # Append business to list
+                        business_list.add_business(business)  # Add only if it's unique
+                        listings_scraped += 1  # Increment the scraped listings count
+
+                        # Save progress to a single centralized file every 10 listings
+                        if listings_scraped % 10 == 0:
+                            business_list.save_to_csv(centralized_filename, append=not first_save)
+                            first_save = False
+                            business_list.business_list.clear()
+
+                    except Exception as e:
+                        print(f"\nError occurred while scraping listing: {e}")
+                    if listings_scraped >= num_listings_to_capture:
+                        break  # Stop scraping if we have enough listings
+
+                # Scroll down to load more listings if they exist
+                page.mouse.wheel(0, 5000)  # Scroll down
+                page.wait_for_timeout(3000)  # Wait for elements to load after scrolling
+
+                # Check if no new listings are loaded
+                new_count = page.locator('//a[contains(@href, "https://www.google.com/maps/place")]').count()
+                if new_count == previously_counted:
+                    scroll_attempts += 1
+                    if scroll_attempts >= MAX_SCROLL_ATTEMPTS:
+                        print(f"No more listings found after {scroll_attempts} scroll attempts. Moving to next city.")
+                        break
+                else:
+                    scroll_attempts = 0  # Reset scroll attempts if new listings are loaded
+
+                previously_counted = new_count
+
+                # Check if "You've reached the end of the list" message appears after scrolling
+                if page.locator("text=You've reached the end of the list").is_visible():
+                    print(f"Reached the end of the list in {selected_city}, {selected_state}. Moving to the next city.")
+                    break  # Move to the next city after end of list
+
+        # When done, print a message saying the results were saved
+        print(f"\nResults saved to {centralized_filename}.csv")
+
+        browser.close()
+
+if __name__ == "__main__":
+    main()
