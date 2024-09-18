@@ -1,5 +1,7 @@
 # Google Maps Business Scraper
 
+## Disclaimer: This script is intended for educational and research purposes only. The author is not responsible for any misuse of this script. Use it responsibly and at your own risk.
+
 This script automates the extraction of business information from Google Maps using Playwright. It allows users to select business categories and scrape details such as business name, address, website, phone number, reviews count, reviews average, latitude, and longitude.
 
 
@@ -61,3 +63,27 @@ Select one or more business types by entering their numbers separated by commas 
 - **Choose the number of listings you want to capture**
 - **Start Scraping**
 - Check the output folder for the data
+
+Output Directory: The scraped data will be saved in an output folder.
+
+CSV File: Data is saved to a centralized CSV file named Scraped_results.csv.
+
+Data Fields:
+```
+name: Business name.
+address: Physical address.
+website: Website URL.
+phone_number: Contact phone number.
+reviews_count: Number of Google reviews.
+reviews_average: Average star rating.
+latitude: Geographic latitude.
+longitude: Geographic longitude.
+```
+
+# Limitations
+- Google Maps Structure Changes: The script relies on the current structure of Google Maps. Changes to the website may break the script.
+- Rate Limiting and Captchas: Excessive scraping may trigger Google's anti-bot measures.
+- Geographic Scope: Currently designed for U.S. cities listed in uscities.csv.
+
+# Contributing 
+Contributions are welcome! Please fork the repository and submit a pull request for any enhancements or bug fixes.
