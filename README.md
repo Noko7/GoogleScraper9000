@@ -42,6 +42,7 @@ playwright install
 ```
 
 ## Usage
+#Start the script
 ```
 python main.py
 ```
