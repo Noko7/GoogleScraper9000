@@ -60,7 +60,7 @@ Select one or more business types by entering their numbers separated by commas 
 
 1. Run the script
 ```
-python scraper.py
+python main.py
 ```
 2. Follow the prompts
 - **Select Business Types:** Use the instructions above to select catagories
