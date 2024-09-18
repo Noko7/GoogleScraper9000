@@ -42,6 +42,9 @@ playwright install
 ```
 
 ## Usage
+```
+python main.py
+```
 
 #Selecting Business Catagories (Feel free to add your own)
 When you run the script, it will display a menu of business catagories:
