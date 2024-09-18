@@ -42,12 +42,12 @@ playwright install
 ```
 
 ## Usage
-#Start the script
+# Start the script
 ```
 python main.py
 ```
 
-#Selecting Business Catagories (Feel free to add your own)
+# Selecting Business Catagories (Feel free to add your own)
 When you run the script, it will display a menu of business catagories:
 ```
 Select one or more business types by entering their numbers separated by commas or ranges (e.g., 1,3,5-7):
