@@ -31,7 +31,7 @@ Ensure you have the uscities.csv file in your project directory.
    ```
    python -m venv venv
    source venv/bin/activate
-   # On Windows use 'venv\Scripts\activate
+   # On Windows use 'venv\Scripts\activate'
 3. **Install Dependencies**
 
 Install the required packages using pip:
