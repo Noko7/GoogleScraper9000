@@ -3,7 +3,7 @@
 This script automates the extraction of business information from Google Maps using Playwright. It allows users to select business categories and scrape details such as business name, address, website, phone number, reviews count, reviews average, latitude, and longitude.
 
 
-## Features
+# Features
 
 - **Multiple Business Categories**: Choose from a predefined list of business types or add your own.
 - **Random City Selection**: Randomly selects cities and states from a provided CSV file (`uscities.csv`).
@@ -11,14 +11,14 @@ This script automates the extraction of business information from Google Maps us
 - **Data Storage**: Saves scraped data to a centralized CSV file with options to append or overwrite.
 - **Duplicate Handling**: Ensures no duplicate businesses are saved.
 
-## Prerequisites
+# Prerequisites
 
 - **Python 3.7 or higher**
 - **Playwright**: For browser automation.
 - **Pandas**: For data manipulation.
 - **An included CSV file named `uscities.csv`**: Should contain at least `city` and `state_id` columns.
 
-## Installation
+# Installation
 
 1. Downlaod or clone the script
    ```
@@ -41,8 +41,8 @@ pip install -r requirements.txt
 playwright install
 ```
 
-## Usage
-# Start the script
+# Usage
+## Start the script
 ```
 python main.py
 ```
