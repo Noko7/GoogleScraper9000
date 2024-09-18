@@ -56,13 +56,7 @@ Select one or more business types by entering their numbers separated by commas 
 3. (ect)...
 ```
 
-## Running the Script
-
-1. Run the script
-```
-python main.py
-```
-2. Follow the prompts
+## Follow the prompts
 - **Select Business Types:** Use the instructions above to select catagories
 - **Choose the number of listings you want to capture**
 - **Start Scraping**
